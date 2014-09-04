@@ -15,9 +15,7 @@ public class Application {
     public static void main(String[] args) throws Exception {
         SpringApplication.run(Application.class);
 
-        ExecutorService service = new ScheduledThreadPoolExecutor(5);
-
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-        scheduler.scheduleAtFixedRate(new Databus(), 0, 1, TimeUnit.MINUTES);
+        scheduler.scheduleAtFixedRate(new databus.Databus(), 0, 1, TimeUnit.MINUTES);
     }
 }
