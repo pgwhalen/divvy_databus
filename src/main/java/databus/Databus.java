@@ -8,6 +8,8 @@ import org.hibernate.Query;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.cfg.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.net.URL;
@@ -23,45 +25,33 @@ import java.util.List;
 public class Databus implements Runnable {
 
     private SessionFactory sessionFactory;
+    private static Logger log = LoggerFactory.getLogger(Databus.class);
 
     ObjectMapper objectMapper = new ObjectMapper();
     Date now;
-
-    public Databus() {
-    }
 
     @Override
     public void run() {
         try {
             start();
         } catch (Exception e) {
+            log.error("Failure to load snapshots.");
             e.printStackTrace();
         }
     }
 
     public void start() throws Exception {
-        sessionFactory = new Configuration()
-                .configure()
-                .buildSessionFactory();
-
         InputStream stream = new URL("http://divvybikes.com/stations/json").openStream();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(stream, Charset.forName("UTF-8")));
         now = new Date();
+        log.info("Station data queried at " + now);
+        BufferedReader reader = new BufferedReader(new InputStreamReader(stream, Charset.forName("UTF-8")));
+
 
         JsonNode json = objectMapper.readValue(stream, JsonNode.class);
         JsonNode stationsJson = json.get("stationBeanList");
 
-        List<Station> allStations = addNewStations(stationsJson);
+        addNewStations(stationsJson);
         createSnapshots(stationsJson);
-
-
-        List<StationSnapshot> stationSnapshotList = new ArrayList<StationSnapshot>();
-        for (JsonNode station : stationsJson) {
-            stationSnapshotList.add(objectMapper.readValue(station.toString(), StationSnapshot.class));
-        }
-
-        int size = stationsJson.size();
-        System.out.println("size: " + size);
     }
 
     public List<Station> addNewStations(JsonNode stationsResponse) throws Exception {
@@ -69,12 +59,10 @@ public class Databus implements Runnable {
         session.beginTransaction();
         List<Station> existingStations = session.createQuery(" from Station ").list();
 
-        System.out.println("existing: " + existingStations.size());
 
         List<Integer> ids = new ArrayList<>();
         for (Station existingStation : existingStations) {
             ids.add(existingStation.getId());
-            System.out.println("station: " + existingStation.getId());
         }
 
         List<Station> allStations = new ArrayList<>();
@@ -84,15 +72,19 @@ public class Databus implements Runnable {
             allStations.add(newStation);
 
             if (!ids.contains(newStation.getId())) {
-                System.out.print(" New Id" + newStation.getId());
                 session.save(newStation);
                 count++;
+                if (count % 20 == 0) {
+                    session.flush();
+                    session.clear();
+                }
             }
         }
         session.getTransaction().commit();
 
-        System.out.println("");
-        System.out.println("added " + count + " stations");
+        if (count > 0) {
+            log.info("Added " + count + " stations to the database.");
+        }
 
         return allStations;
     }
@@ -101,14 +93,25 @@ public class Databus implements Runnable {
         Session session = sessionFactory.openSession();
         session.beginTransaction();
 
+        int count = 0;
         for (JsonNode stationSnapshotJson : stationsResponse) {
             StationSnapshot newStationSnapshot = objectMapper.readValue(stationSnapshotJson.toString(), StationSnapshot.class);
             newStationSnapshot.setTimestamp(now);
             session.save(newStationSnapshot);
+
+            count++;
+            if (count % 20 == 0) {
+                session.flush();
+                session.clear();
+            }
         }
+        log.info("Loaded snapshots for " + stationsResponse.size() + " stations.");
 
         session.getTransaction().commit();
     }
 
+    public void setSessionFactory(SessionFactory sessionFactory) {
+        this.sessionFactory = sessionFactory;
+    }
 }
 
